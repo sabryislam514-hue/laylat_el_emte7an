@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-
-const STORAGE_KEY = 'laylat-el-emtehan-db-v2'
+import { supabase } from '../supabaseClient'
 
 export const GRADES = [
   { id: 'grade1', label: 'الصف الأول الثانوي' },
@@ -25,112 +24,45 @@ const defaultSiteContent = {
   supportTelegram: 'https://t.me/laylat_el_emtehan',
 }
 
-const defaultReviews = [
-  {
-    id: 'r1',
-    subject: 'اللغة العربية',
-    title: 'مراجعة الباب الأول لغة عربية',
-    instructor: 'مستشار المادة',
-    grade: 'grade1',
-    videoUrl: 'https://www.youtube.com/watch?v=M7lc1UVf-VE',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-  },
-  {
-    id: 'r2',
-    subject: 'الفيزياء',
-    title: 'الفيزياء الحديثة في ساعتين',
-    instructor: 'خبير الفيزياء',
-    grade: 'grade3',
-    videoUrl: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-  },
-  {
-    id: 'r3',
-    subject: 'الكيمياء',
-    title: 'مراجعة شاملة للعضوية',
-    instructor: 'مستشار الكيمياء',
-    grade: 'grade3',
-    videoUrl: 'https://www.youtube.com/watch?v=jNQXAC9IVRw',
-    pdfUrl: '',
-  },
-  {
-    id: 'r4',
-    subject: 'الرياضيات',
-    title: 'الجبر والتفاضل — ليلة الامتحان',
-    instructor: 'خبير الرياضيات',
-    grade: 'grade2',
-    videoUrl: 'https://www.youtube.com/watch?v=LXb3EKWsInQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-  },
-  {
-    id: 'r5',
-    subject: 'اللغة الإنجليزية',
-    title: 'مراجعة الجرامر والنصوص',
-    instructor: 'مدرس أول لغة إنجليزية',
-    grade: 'grade1',
-    videoUrl: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ',
-    pdfUrl: '',
-  },
-  {
-    id: 'r6',
-    subject: 'التاريخ',
-    title: 'تاريخ مصر الحديث في مراجعة واحدة',
-    instructor: 'مستشار الدراسات',
-    grade: 'grade2',
-    videoUrl: 'https://www.youtube.com/watch?v=M7lc1UVf-VE',
-    pdfUrl: '',
-  },
-]
-
 const AppContext = createContext(null)
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) {
-      return {
-        students: [],
-        reviews: defaultReviews,
-        siteContent: defaultSiteContent,
-        session: null,
-      }
-    }
-    const parsed = JSON.parse(raw)
-    return {
-      students: parsed.students ?? [],
-      reviews: parsed.reviews?.length ? parsed.reviews : defaultReviews,
-      siteContent: { ...defaultSiteContent, ...(parsed.siteContent ?? {}) },
-      session: parsed.session ?? null,
-    }
-  } catch {
-    return {
-      students: [],
-      reviews: defaultReviews,
-      siteContent: defaultSiteContent,
-      session: null,
-    }
-  }
-}
 
 function normalizePhone(phone) {
   return String(phone || '').replace(/\s+/g, '').trim()
 }
 
 export function AppProvider({ children }) {
-  const initial = loadState()
-  const [students, setStudents] = useState(initial.students)
-  const [reviews, setReviews] = useState(initial.reviews)
-  const [siteContent, setSiteContent] = useState(initial.siteContent)
-  const [session, setSession] = useState(initial.session)
+  const [students, setStudents] = useState([])
+  const [reviews, setReviews] = useState([])
+  const [siteContent, setSiteContent] = useState(defaultSiteContent)
+  const [session, setSession] = useState(null)
   const [liveEditMode, setLiveEditMode] = useState(false)
   const [adminGradeFilter, setAdminGradeFilter] = useState('all')
+  const [loadingData, setLoadingData] = useState(true)
 
+  // جلب البيانات حصرياً من Supabase بدون أي إضافات وهمية تلقائية
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ students, reviews, siteContent, session }),
-    )
-  }, [students, reviews, siteContent, session])
+    async function fetchData() {
+      try {
+        const { data: studentsData } = await supabase.from('students').select('*')
+        if (studentsData) setStudents(studentsData)
+
+        const { data: reviewsData } = await supabase.from('reviews').select('*')
+        if (reviewsData) {
+          setReviews(reviewsData)
+        }
+
+        const { data: contentData } = await supabase.from('site_content').select('*').single()
+        if (contentData) {
+          setSiteContent({ ...defaultSiteContent, ...contentData })
+        }
+      } catch (err) {
+        console.error('Error fetching from Supabase:', err)
+      } finally {
+        setLoadingData(false)
+      }
+    }
+    fetchData()
+  }, [])
 
   const currentUser = useMemo(() => {
     if (!session) return null
@@ -156,7 +88,7 @@ export function AppProvider({ children }) {
     return { ok: true }
   }
 
-  const register = ({ name, phone, password, grade }) => {
+  const register = async ({ name, phone, password, grade }) => {
     const p = normalizePhone(phone)
     if (!name?.trim() || !p || !password || !grade) {
       return { ok: false, message: 'يرجى استكمال جميع البيانات' }
@@ -175,9 +107,17 @@ export function AppProvider({ children }) {
       grade,
       createdAt: Date.now(),
     }
-    setStudents((prev) => [...prev, student])
-    setSession({ role: 'student', id: student.id, phone: student.phone })
-    return { ok: true }
+
+    try {
+      const { error } = await supabase.from('students').insert([student])
+      if (error) throw error
+      setStudents((prev) => [...prev, student])
+      setSession({ role: 'student', id: student.id, phone: student.phone })
+      return { ok: true }
+    } catch (err) {
+      console.error(err)
+      return { ok: false, message: 'حدث خطأ أثناء التسجيل، حاول مرة أخرى' }
+    }
   }
 
   const logout = () => {
@@ -185,33 +125,66 @@ export function AppProvider({ children }) {
     setLiveEditMode(false)
   }
 
-  const addReview = (review) => {
-    setReviews((prev) => [{ ...review, id: crypto.randomUUID() }, ...prev])
+  const addReview = async (review) => {
+    const newRev = { ...review, id: crypto.randomUUID() }
+    try {
+      await supabase.from('reviews').insert([newRev])
+      setReviews((prev) => [newRev, ...prev])
+    } catch (err) {
+      console.error(err)
+    }
   }
 
-  const updateReview = (id, patch) => {
-    setReviews((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+  const updateReview = async (id, patch) => {
+    try {
+      await supabase.from('reviews').update(patch).eq('id', id)
+      setReviews((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+    } catch (err) {
+      console.error(err)
+    }
   }
 
-  const deleteReview = (id) => {
-    setReviews((prev) => prev.filter((r) => r.id !== id))
+  const deleteReview = async (id) => {
+    try {
+      await supabase.from('reviews').delete().eq('id', id)
+      setReviews((prev) => prev.filter((r) => r.id !== id))
+    } catch (err) {
+      console.error(err)
+    }
   }
 
-  const deleteStudent = (id) => {
-    setStudents((prev) => prev.filter((s) => s.id !== id))
-    if (session?.id === id) setSession(null)
+  const deleteStudent = async (id) => {
+    try {
+      await supabase.from('students').delete().eq('id', id)
+      setStudents((prev) => prev.filter((s) => s.id !== id))
+      if (session?.id === id) setSession(null)
+    } catch (err) {
+      console.error(err)
+    }
   }
 
-  const resetStudentPassword = (id, newPassword) => {
+  const resetStudentPassword = async (id, newPassword) => {
     if (!newPassword) return { ok: false, message: 'أدخل كلمة مرور جديدة' }
-    setStudents((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, password: newPassword } : s)),
-    )
-    return { ok: true }
+    try {
+      await supabase.from('students').update({ password: newPassword }).eq('id', id)
+      setStudents((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, password: newPassword } : s)),
+      )
+      return { ok: true }
+    } catch (err) {
+      console.error(err)
+      return { ok: false, message: 'حدث خطأ أثناء التحديث' }
+    }
   }
 
-  const updateSiteContent = (patch) => {
-    setSiteContent((prev) => ({ ...prev, ...patch }))
+  const updateSiteContent = async (patch) => {
+    const updated = { ...siteContent, ...patch }
+    setSiteContent(updated)
+    try {
+      await supabase.from('site_content').upsert({ id: 1, ...updated })
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   const visibleReviews = useMemo(() => {
@@ -234,6 +207,7 @@ export function AppProvider({ children }) {
     adminGradeFilter,
     setAdminGradeFilter,
     visibleReviews,
+    loadingData,
     login,
     register,
     logout,
